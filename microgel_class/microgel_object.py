@@ -344,12 +344,12 @@ class Microgel:
 
         if self.c_salt > 0:
             if R==0:
-                self.__insert_ions(self.N_salt_ion_pairs, self.PART_TYPE["ion_cat"], +1)
-                self.__insert_ions(self.N_salt_ion_pairs, self.PART_TYPE["ion_an"], -1)
+                self.__insert_ions(self.N_salt_ion_pairs, self.PART_TYPE["salt_cat"], +1)
+                self.__insert_ions(self.N_salt_ion_pairs, self.PART_TYPE["salt_an"], -1)
             else:
                 self.N_salt_ion_pairs = int(self.c_salt * 4 * math.pi * R**3 / 3) # number of salt ion pairs
-                self.__insert_ions_sphericalcell(self.N_salt_ion_pairs, self.PART_TYPE["ion_cat"], +1, R)
-                self.__insert_ions_sphericalcell(self.N_salt_ion_pairs, self.PART_TYPE["ion_an"], -1, R)
+                self.__insert_ions_sphericalcell(self.N_salt_ion_pairs, self.PART_TYPE["salt_cat"], +1, R)
+                self.__insert_ions_sphericalcell(self.N_salt_ion_pairs, self.PART_TYPE["salt_an"], -1, R)
 
         print("Total number of ion pairs: ", self.N_salt_ion_pairs)
         print("Total number of particles: ", len(self.system.part[:]))

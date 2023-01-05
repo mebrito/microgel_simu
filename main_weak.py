@@ -8,13 +8,13 @@ from espressomd import analyze
 from espressomd import integrate
 from espressomd import reaction_ensemble
 from espressomd import electrostatics
-from espressomd import diamond
+# from espressomd import diamond
 from espressomd.interactions import *
 from scipy import interpolate
-from espressomd import minimize_energy
+# from espressomd import minimize_energy
 from espressomd.io.writer import vtf 
 
-from statistic import *
+# from statistic import *
 import csv
 
 import gzip
@@ -22,14 +22,21 @@ import pickle
 import os
 import time
 
-required_features = ["ELECTROSTATICS", "EXTERNAL_FORCES", "LENNARD_JONES"]
+from system_parameters import *
+from microgel_class import microgel_object
+from handling import handler
+from analysis import densityProfile_calc as dp
+from analysis import com as com_mod
+
+# required_features = ["ELECTROSTATICS", "EXTERNAL_FORCES", "LENNARD_JONES"]
+required_features = ["ELECTROSTATICS", "LENNARD_JONES"]
 espressomd.assert_features(required_features)
 
 # print help message if proper command-line arguments are not provided
-if (len(sys.argv) != 8):
-    print("\nGot ", str(len(sys.argv) - 1), " arguments, need 7\n\nusage:" +
-          sys.argv[0] + " final_box_l MPC Kcideal_in_mol_per_l cs_bulk bjerrum pH run_id\n")
-    sys.exit()
+# if (len(sys.argv) != 8):
+#     print("\nGot ", str(len(sys.argv) - 1), " arguments, need 7\n\nusage:" +
+#           sys.argv[0] + " final_box_l MPC Kcideal_in_mol_per_l cs_bulk bjerrum pH run_id\n")
+#     sys.exit()
 
 # System parameters
 #############################################################
@@ -37,19 +44,19 @@ if (len(sys.argv) != 8):
 
 
 #example call pypresso weak-gel.py 20 39 1e-4 0.00269541778 2 1e-9 0 #Note that the scripts becomes more unstable as the number of monomers per chain become smaller (MPC)
-final_box_l=float(sys.argv[1]) #20
-MPC=int(sys.argv[2]) #39
-Kcideal_in_mol_per_l=float(sys.argv[3]) #1e-4
-cs_bulk=float(sys.argv[4]) #0.00269541778 #in units of 1/sigma**3, sigma=3.55Angstrom #0.00269541778/sigma**3=0.1 mol/l
-bjerrum=float(sys.argv[5]) #2.0
-pH=float(sys.argv[6]) #pH in bulk in mol/l from 1 to 13 works good
-run_id=int(sys.argv[7])
+final_box_l=250 #float(sys.argv[1]) #250
+MPC=5440 #int(sys.argv[2]) #39
+Kcideal_in_mol_per_l=1e-4 #float(sys.argv[3]) #1e-4
+cs_bulk=0.00269541778 #float(sys.argv[4]) #0.00269541778 #in units of 1/sigma**3, sigma=3.55Angstrom #0.00269541778/sigma**3=0.1 mol/l
+bjerrum=2.0 #float(sys.argv[5]) #2.0
+pH=5 #float(sys.argv[6]) #pH in bulk in mol/l from 1 to 13 works good
+run_id=1 #int(sys.argv[7])
 
 conversion_factor_from_1_per_sigma_3_to_mol_per_l=37.1
-temperature = 1.0
+temperature = LANGEVIN_PARAMS['kT']
 
-
-ionic_strength, excess_chemical_potential_monovalent_pairs_in_bulk_data, bjerrums,excess_chemical_potential_monovalent_pairs_in_bulk_data_error =np.loadtxt("../excess_chemical_potential.dat", unpack=True) #remember, excess chemical potential does not know about types
+traj_path = os.path.dirname(os.path.abspath(__file__))
+ionic_strength, excess_chemical_potential_monovalent_pairs_in_bulk_data, bjerrums,excess_chemical_potential_monovalent_pairs_in_bulk_data_error =np.loadtxt(traj_path + "/excess_chemical_potential.dat", unpack=True) #remember, excess chemical potential does not know about types
 excess_chemical_potential_monovalent_pairs_in_bulk=interpolate.interp1d(ionic_strength, excess_chemical_potential_monovalent_pairs_in_bulk_data)
 
 
@@ -145,16 +152,15 @@ check_concentrations()
 #############################################################
 simulation_parameters=[final_box_l,MPC,Kcideal_in_mol_per_l, cs_bulk, bjerrum, pH, cH_bulk, cOH_bulk, cNa_bulk, cCl_bulk, ionic_strength_bulk ]
 
-system = espressomd.System(box_l=[50.0, 50.0, 50.0])
-system.set_random_state_PRNG()
+system = espressomd.System(box_l=[final_box_l, final_box_l, final_box_l])
+# system.set_random_state_PRNG()
 #system.seed = system.cell_system.get_state()['n_nodes'] * [1234]
 np.random.seed(seed=np.random.randint(2**30-1))
 
 system.time_step = 0.01
 system.cell_system.skin = 0.4
 
-system.thermostat.set_langevin(kT=temperature, gamma=1.0)
-system.cell_system.max_num_cells = 2744
+# system.cell_system.max_num_cells = 2744
 
 
 #############################################################
@@ -163,24 +169,24 @@ system.cell_system.max_num_cells = 2744
 
 # Particle setup
 #############################################################
-type_H=0
-type_A=1
-type_Cl=2
-type_Na=3
-type_constraint=4
-type_HA=5
-type_OH=6
+type_H=4
+type_A=3
+type_Cl=7
+type_Na=6
+type_constraint=99
+type_HA=1
+type_OH=8
 types=[type_H, type_A, type_Cl,type_Na, type_constraint, type_HA, type_OH]
 charges_of_types={type_H:1, type_A:-1, type_Cl:-1, type_Na:1}
 
-lj_eps = 1.0
-lj_sig = 1.0
-lj_cut = 2**(1.0 / 6) * lj_sig
-for type_1 in types:
-    for type_2 in types:
-        system.non_bonded_inter[type_1, type_2].lennard_jones.set_params(
-            epsilon=lj_eps, sigma=lj_sig,
-            cutoff=lj_cut, shift="auto")
+# lj_eps = 1.0
+# lj_sig = 1.0
+# lj_cut = 2**(1.0 / 6) * lj_sig
+# for type_1 in types:
+#     for type_2 in types:
+#         system.non_bonded_inter[type_1, type_2].lennard_jones.set_params(
+#             epsilon=lj_eps, sigma=lj_sig,
+#             cutoff=lj_cut, shift="auto")
 
 def calculate_current_end_to_end_distance():
     current_end_to_end_distances=[]
@@ -206,54 +212,70 @@ def calculate_current_end_to_end_distance():
 
 
 ############
-#setup weak gel
+#setup weak microgel
+# ------------------------------------------------------------------------
+
+alpha_an = 0.1
+
+microgel = microgel_object.Microgel(system, FENE_BOND_PARAMS, PART_TYPE, NONBOND_WCA_PARAMS, Nbeads_arm, cell_unit, N_cat, N_an, c_salt)
+number_crosslink, number_monomers = microgel.initialize_from_file()
+N_an = int(alpha_an * (number_crosslink + number_monomers))
+microgel.N_an = N_an
+microgel.initialize_internoelec()
+if N_cat != 0 or N_an !=0:
+    microgel.charge_beads_homo()
+handler.remove_overlap(system,STEEPEST_DESCENT_PARAMS)
+
+system.thermostat.set_langevin(**LANGEVIN_PARAMS)
+
+# ------------------------------------------------------------------------
 
 #diamond uses bond with id 0
-fene = FeneBond(k=30.0, d_r_max=1.5, r_0=0)
-system.bonded_inter.add(fene)
+# fene = FeneBond(k=30.0, d_r_max=1.5, r_0=0)
+# system.bonded_inter.add(fene)
 
 # length for Kremer-Grest chain
-bond_length = 0.9
+# bond_length = 0.9
 
 # The physical distance beween nodes such that a line of monomers "fit" needs to be worked out.
 # This is done via the unit diamond lattice size parameter "a".
-a = (MPC + 1) * bond_length / (0.25 * np.sqrt(3))
+# a = (MPC + 1) * bond_length / (0.25 * np.sqrt(3))
 
 # Lastly, the created periodic connections requires a specific simulation box.
-system.box_l = [a, a, a]
+# system.box_l = [a, a, a]
 
 # We can now call diamond to place the monomers, crosslinks and bonds.
-diamond.Diamond(a=a, bond_length=bond_length, MPC=MPC)
-system.part[:].type=type_HA
+# diamond.Diamond(a=a, bond_length=bond_length, MPC=MPC)
+# system.part[:].type=type_HA
 num_gel_particles=len(system.part[:].type)
 gel_ids=range(0,num_gel_particles)
-print("number of gel particles", num_gel_particles)
-bonds_from=[]
-bonds_to=[]
-for i in range(num_gel_particles):
-    for j in range(len(system.part[i].bonds)):
-        bonds_from.append(i)
-        bonds_to.append(system.part[i].bonds[j][1])
+# print("number of gel particles", num_gel_particles)
+# bonds_from=[]
+# bonds_to=[]
+# for i in range(num_gel_particles):
+#     for j in range(len(system.part[i].bonds)):
+#         bonds_from.append(i)
+#         bonds_to.append(system.part[i].bonds[j][1])
 
-def calculate_average_bond_length(bonds_from,bonds_to):
-    current_bond_lengths=[]
-    for i,j in zip(bonds_from, bonds_to):
-        current_bond_lengths.append(np.sqrt(system.analysis.min_dist2(system.part[i].pos_folded, system.part[j].pos_folded)))
-    return np.mean(current_bond_lengths)
+# def calculate_average_bond_length(bonds_from,bonds_to):
+#     current_bond_lengths=[]
+#     for i,j in zip(bonds_from, bonds_to):
+#         current_bond_lengths.append(np.sqrt(system.analysis.min_dist2(system.part[i].pos_folded, system.part[j].pos_folded)))
+#     return np.mean(current_bond_lengths)
 
-# because stretched polymers are not too impressive...
-print("simulating a slow compression...")
-step_size_box_l_compression=1 # in units of sigma
-steps_needed_until_we_have_final_compression=int((a-final_box_l)/step_size_box_l_compression)
-energy_minimizer= minimize_energy.MinimizeEnergy(f_max = 2.0, gamma= 10.0, max_steps= 1e8,max_displacement=0.05)
-for d in np.arange(0, steps_needed_until_we_have_final_compression):
-    system.change_volume_and_rescale_particles(
-        d_new=system.box_l[0] - step_size_box_l_compression, dir='xyz')
-    print("box now at ", system.box_l)
-    system.integrator.run(steps=1000)
-    print(system.analysis.min_dist())  
-#    energy_minimizer.minimize()
-system.change_volume_and_rescale_particles(d_new=final_box_l, dir='xyz')
+# # because stretched polymers are not too impressive...
+# print("simulating a slow compression...")
+# step_size_box_l_compression=1 # in units of sigma
+# steps_needed_until_we_have_final_compression=int((a-final_box_l)/step_size_box_l_compression)
+# energy_minimizer= minimize_energy.MinimizeEnergy(f_max = 2.0, gamma= 10.0, max_steps= 1e8,max_displacement=0.05)
+# for d in np.arange(0, steps_needed_until_we_have_final_compression):
+#     system.change_volume_and_rescale_particles(
+#         d_new=system.box_l[0] - step_size_box_l_compression, dir='xyz')
+#     print("box now at ", system.box_l)
+#     system.integrator.run(steps=1000)
+#     print(system.analysis.min_dist())  
+# #    energy_minimizer.minimize()
+# system.change_volume_and_rescale_particles(d_new=final_box_l, dir='xyz')
 
 outfile = open('diamond_before_warmup_'+str(final_box_l)+'.vtf', 'w')
 vtf.writevsf(system, outfile)
@@ -291,7 +313,7 @@ def MC_swap_A_HA_particles(type_HA, type_A):
             system.part[random_id_HA].type=type_HA
             system.part[random_id_HA].q=0
 
-RE = reaction_ensemble.ReactionEnsemble(temperature=temperature, exclusion_radius=0.9)
+RE = reaction_ensemble.ReactionEnsemble(kT=temperature, exclusion_radius=0.9, seed=42319)
 #coupling to the Na, OH, Cl, reservoir
 RE.add_reaction(gamma=cNa_bulk*cCl_bulk * np.exp(excess_chemical_potential_monovalent_pairs_in_bulk(ionic_strength_bulk) / temperature), reactant_types=[], reactant_coefficients=[], product_types=[type_Na, type_Cl], product_coefficients=[1, 1], default_charges={type_Na: 1, type_Cl: -1})
 RE.add_reaction(gamma=cOH_bulk/cCl_bulk, reactant_types=[type_Cl], reactant_coefficients=[1], product_types=[type_OH], product_coefficients=[1], default_charges={type_OH: -1, type_Cl: -1})
@@ -327,7 +349,7 @@ def reaction(steps):
         MC_swap_A_HA_particles(type_HA, type_A)
 
 #setup widom insertion
-Widom = reaction_ensemble.WidomInsertion(temperature=temperature, exclusion_radius=0.0)
+Widom = reaction_ensemble.WidomInsertion(kT=temperature, seed=14758)
 Widom.add_reaction(gamma=np.nan, reactant_types=[], reactant_coefficients=[], product_types=[
                 type_Na, type_Cl], product_coefficients=[1, 1], default_charges={type_Cl: -1, type_Na: +1})
 Widom.add_reaction(gamma=np.nan, reactant_types=[], reactant_coefficients=[], product_types=[
@@ -335,7 +357,9 @@ Widom.add_reaction(gamma=np.nan, reactant_types=[], reactant_coefficients=[], pr
 Widom.add_reaction(gamma=np.nan, reactant_types=[], reactant_coefficients=[], product_types=[
                 type_Cl], product_coefficients=[1], default_charges={type_Cl: -1},check_for_electroneutrality=False)   
 
-reaction(10000+16*2*MPC)
+print("RUN reaction 0")
+# reaction(10000+16*2*MPC)
+reaction(2*MPC)
 
 def create_particle_in_safe_dist(part_type, part_charge):
     min_dist=2**(1.0/6.0) #in units of sigma
@@ -348,7 +372,8 @@ def create_particle_in_safe_dist(part_type, part_charge):
     return part.id
 
 #add salt for p3m tuning, this is removed automatically by grandcanonical moves if the salt needs to be removed
-for i in range(16*MPC+int(0.6*cs_bulk*final_box_l**3)):
+print("Add salt for p3m tuning")
+for i in range(MPC+int(0.6*cs_bulk*final_box_l**3)):
     create_particle_in_safe_dist(type_Cl, -1)
     create_particle_in_safe_dist(type_Na, 1)
 
@@ -377,12 +402,14 @@ system.force_cap = lj_cap
 system.time_step = 0.01
 
 
+print("RUN reaction 1")
 RE.reaction(80000)
 
 # Warmup Integration Loop
 i = 0
 
 start_warmup = time.clock() 
+print("WHILE warmup")
 while (i < warm_n_times):
     print(i, "warmup")
     reaction(MPC*20+300)
@@ -402,7 +429,7 @@ print("nr_of_cylces_in_15_minutes", nr_of_cylces_in_15_minutes)
 system.force_cap = 0
 system.time_step = 0.01
 #MC warmup
-reaction(5*MPC*16)
+reaction(5*MPC)
 RE.reaction(120000)
 
 #tuned_skin=system.cell_system.tune_skin(min_skin=1.0, max_skin=1.6, tol=0.05, int_steps=200)
@@ -454,12 +481,13 @@ if(os.path.exists("checkpoint_"+str(final_box_l)+".pgz")):
         bond_lengths=data[14]
 
 filename="observables_run_"+str(run_id)+"box_l_"+str(final_box_l)
-np.savetxt(filename+"_bonds.out", np.c_[bonds_from,bonds_to])
+# np.savetxt(filename+"_bonds.out", np.c_[bonds_from,bonds_to])
 
 scalar_observables=[num_Hs, num_OHs, num_Nas, num_Cls, num_As, total_isotropic_pressures, end_to_end_distances, bond_lengths] #collect references to scalar observables
 
 box_l=final_box_l
 volume=final_box_l**3
+print("SAMPING loop")
 for i in range(10000):
     N_steps=len(num_Hs)+1
     for k in range(2):
@@ -484,20 +512,20 @@ for i in range(10000):
     gel_charges.append(system.part[0:num_gel_particles].q)
     end_to_end_distances.append(calculate_current_end_to_end_distance())
     
-    bond_lengths.append(calculate_average_bond_length(bonds_from, bonds_to))
+    # bond_lengths.append(calculate_average_bond_length(bonds_from, bonds_to))
 
     if(i % nr_of_cylces_in_15_minutes == 0):
         
         scalar_observables_means=[]
         scalar_observables_errors=[]
-        for scalar_observable_i in range(len(scalar_observables)):
-            mean_scalar_observable, correlation_corrected_error =calc_error(scalar_observables[scalar_observable_i])
-            scalar_observables_means.append(mean_scalar_observable)
-            scalar_observables_errors.append(correlation_corrected_error)
+        # for scalar_observable_i in range(len(scalar_observables)):
+        #     mean_scalar_observable, correlation_corrected_error =calc_error(scalar_observables[scalar_observable_i])
+        #     scalar_observables_means.append(mean_scalar_observable)
+        #     scalar_observables_errors.append(correlation_corrected_error)
 
         #save degree_of_dissociation
-        degree_of_dissociation=scalar_observables_means[4]/(16.0*MPC+8)
-        err_degree_of_dissociation=scalar_observables_errors[4]/(16.0*MPC+8)
+        degree_of_dissociation=scalar_observables_means[4]/(MPC+8)
+        err_degree_of_dissociation=scalar_observables_errors[4]/(MPC+8)
         scalar_observables_means.append(degree_of_dissociation)
         scalar_observables_errors.append(err_degree_of_dissociation)
         
