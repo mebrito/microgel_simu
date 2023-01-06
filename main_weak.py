@@ -1,6 +1,8 @@
 from __future__ import print_function
 import numpy as np
 import sys
+from tqdm import tqdm
+from numpy import linalg as LA
 
 import espressomd
 from espressomd import code_info
@@ -47,10 +49,12 @@ espressomd.assert_features(required_features)
 final_box_l=250 #float(sys.argv[1]) #250
 MPC=5440 #int(sys.argv[2]) #39
 Kcideal_in_mol_per_l=1e-4 #float(sys.argv[3]) #1e-4
-cs_bulk=0.00269541778 #float(sys.argv[4]) #0.00269541778 #in units of 1/sigma**3, sigma=3.55Angstrom #0.00269541778/sigma**3=0.1 mol/l
+cs_bulk=0.0000269541778 #float(sys.argv[4]) #0.00269541778 #in units of 1/sigma**3, sigma=3.55Angstrom #0.00269541778/sigma**3=0.1 mol/l
 bjerrum=2.0 #float(sys.argv[5]) #2.0
-pH=5 #float(sys.argv[6]) #pH in bulk in mol/l from 1 to 13 works good
+pH=float(sys.argv[1]) #pH in bulk in mol/l from 1 to 13 works good
 run_id=1 #int(sys.argv[7])
+
+print(f'{pH=}')
 
 conversion_factor_from_1_per_sigma_3_to_mol_per_l=37.1
 temperature = LANGEVIN_PARAMS['kT']
@@ -226,8 +230,6 @@ if N_cat != 0 or N_an !=0:
     microgel.charge_beads_homo()
 handler.remove_overlap(system,STEEPEST_DESCENT_PARAMS)
 
-system.thermostat.set_langevin(**LANGEVIN_PARAMS)
-
 # ------------------------------------------------------------------------
 
 #diamond uses bond with id 0
@@ -345,7 +347,7 @@ print(RE.get_status())
 def reaction(steps):
     global type_HA, type_A, MPC
     RE.reaction(int(steps))
-    for k in range(int(MPC/5.0)):
+    for k in tqdm(range(int(MPC/100.0))):
         MC_swap_A_HA_particles(type_HA, type_A)
 
 #setup widom insertion
@@ -359,24 +361,30 @@ Widom.add_reaction(gamma=np.nan, reactant_types=[], reactant_coefficients=[], pr
 
 print("RUN reaction 0")
 # reaction(10000+16*2*MPC)
-reaction(2*MPC)
+reaction(1000)
 
 def create_particle_in_safe_dist(part_type, part_charge):
     min_dist=2**(1.0/6.0) #in units of sigma
     # add particle after last known particle
     pos = system.box_l[0]*np.random.random(3)
     part=system.part.add(pos=pos, type=part_type, q=part_charge)
-    while(system.analysis.dist_to(id=part.id)<min_dist*1.1):
-        pos = system.box_l[0]*np.random.random(3)
-        system.part[part.id].pos=pos
-    return part.id
+    # while((LA.norm(system.part[:].pos-system.part[part.id].pos, axis=1)).min()<min_dist*1.1):
+    #     pos = system.box_l[0]*np.random.random(3)
+    #     system.part[part.id].pos=pos
+    # return part.id
 
 #add salt for p3m tuning, this is removed automatically by grandcanonical moves if the salt needs to be removed
 print("Add salt for p3m tuning")
-for i in range(MPC+int(0.6*cs_bulk*final_box_l**3)):
+# for i in range(MPC+int(0.6*cs_bulk*final_box_l**3)):
+print(int(0.6*cs_bulk*final_box_l**3))
+for i in range(int(0.6*cs_bulk*final_box_l**3)):
     create_particle_in_safe_dist(type_Cl, -1)
     create_particle_in_safe_dist(type_Na, 1)
 
+handler.remove_overlap(system,STEEPEST_DESCENT_PARAMS)
+system.thermostat.set_langevin(**LANGEVIN_PARAMS)
+
+print("tune skin 1")
 tuned_skin=system.cell_system.tune_skin(min_skin=1.0, max_skin=1.6, tol=0.05, int_steps=200)
 print("tuned_skin", tuned_skin)
 
@@ -388,6 +396,7 @@ p3m_params = p3m.get_params()
 for key in list(p3m_params.keys()):
     print("{} = {}".format(key, p3m_params[key]))
 
+print("tune skin 2")
 tuned_skin=system.cell_system.tune_skin(min_skin=1.0, max_skin=1.6, tol=0.05, int_steps=200)
 print("tuned_skin", tuned_skin)
 
@@ -403,27 +412,50 @@ system.time_step = 0.01
 
 
 print("RUN reaction 1")
-RE.reaction(80000)
+RE.reaction(1000)
+
+fp_0 = open('trajectory_before_warmup.vtf', mode='w+t')
+espressomd.io.writer.vtf.writevsf(system, fp_0)
+espressomd.io.writer.vtf.writevcf(system, fp_0)
+fp_0.close()
 
 # Warmup Integration Loop
 i = 0
 
-start_warmup = time.clock() 
+start_warmup = time.process_time() 
 print("WHILE warmup")
+warm_n_times = 200
+energies_tot_warm = np.zeros((warm_n_times, 2))
 while (i < warm_n_times):
     print(i, "warmup")
-    reaction(MPC*20+300)
-    system.integrator.run(steps=1000+MPC*2)
+    # reaction(MPC*20+300)
+    reaction(20)
+    # system.integrator.run(steps=1000+MPC*2)
+    system.integrator.run(steps=100)
+    energies_tot_warm[i] = (system.time, system.analysis.energy()['total'])
     print("mindist", system.analysis.min_dist(), "N_tot", len(system.part[:].q))    
     i += 1
     #Increase LJ cap
     lj_cap = lj_cap + 10
     system.force_cap = lj_cap
-end_warmup=time.clock()
+end_warmup = time.process_time()
 elapsed_time_in_minutes = (end_warmup - start_warmup)/60.0 #in seconds
 time_per_cyle=elapsed_time_in_minutes/warm_n_times #in minutes/cycle
 nr_of_cylces_in_15_minutes=int((15.-5)/time_per_cyle) #minus 5 minute to make sure the last checkpoint is written before the time slot on bee ends
 print("nr_of_cylces_in_15_minutes", nr_of_cylces_in_15_minutes)
+
+fp_0 = open('trajectory_after_warmup.vtf', mode='w+t')
+espressomd.io.writer.vtf.writevsf(system, fp_0)
+espressomd.io.writer.vtf.writevcf(system, fp_0)
+fp_0.close()
+
+string1 = './TotEner_warmup.dat'
+np.savetxt(string1, np.column_stack((energies_tot_warm[:, 0], energies_tot_warm[:, 1])),fmt='%.5e', delimiter='\t')
+
+
+print("End warmup")
+
+exit()
 
 # remove force capping
 system.force_cap = 0
@@ -487,7 +519,7 @@ scalar_observables=[num_Hs, num_OHs, num_Nas, num_Cls, num_As, total_isotropic_p
 
 box_l=final_box_l
 volume=final_box_l**3
-print("SAMPING loop")
+print("SAMPLING loop")
 for i in range(10000):
     N_steps=len(num_Hs)+1
     for k in range(2):
