@@ -71,8 +71,8 @@ energies_tot_warm_bool = True       # calculation of warmup energy
 
 # Integration
 int_steps = int(1.0/dt)     # integration steps (chosen such that after int_steps, one unit of time is achieved)
-int_n_times = 5         # number of iterations within correlated configurations
-int_uncorr_times = 5       # number of iterations for uncorrelated configurations
+int_n_times = 20         # number of iterations within correlated configurations
+int_uncorr_times = 10       # number of iterations for uncorrelated configurations
 
 TUNE_SET = {'tune_bool' : True,
              'i_val_1' : 15000,

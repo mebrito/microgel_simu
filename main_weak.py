@@ -46,15 +46,19 @@ espressomd.assert_features(required_features)
 
 
 #example call pypresso weak-gel.py 20 39 1e-4 0.00269541778 2 1e-9 0 #Note that the scripts becomes more unstable as the number of monomers per chain become smaller (MPC)
-final_box_l=250 #float(sys.argv[1]) #250
-MPC=5440 #int(sys.argv[2]) #39
+final_box_l=float(sys.argv[1]) #250
+# MPC=5440 #int(sys.argv[2]) #39
 Kcideal_in_mol_per_l=1e-4 #float(sys.argv[3]) #1e-4
 cs_bulk=0.0000269541778 #float(sys.argv[4]) #0.00269541778 #in units of 1/sigma**3, sigma=3.55Angstrom #0.00269541778/sigma**3=0.1 mol/l
 bjerrum=2.0 #float(sys.argv[5]) #2.0
-pH=float(sys.argv[1]) #pH in bulk in mol/l from 1 to 13 works good
+pH=float(sys.argv[2]) #pH in bulk in mol/l from 1 to 13 works good
+alpha_an = float(sys.argv[3])
+mon_per_chain = int(sys.argv[4])
 run_id=1 #int(sys.argv[7])
 
 print(f'{pH=}')
+
+dir_name_var = os.path.abspath('.') + '/'
 
 conversion_factor_from_1_per_sigma_3_to_mol_per_l=37.1
 temperature = LANGEVIN_PARAMS['kT']
@@ -154,7 +158,6 @@ check_concentrations()
 
 # Integration parameters
 #############################################################
-simulation_parameters=[final_box_l,MPC,Kcideal_in_mol_per_l, cs_bulk, bjerrum, pH, cH_bulk, cOH_bulk, cNa_bulk, cCl_bulk, ionic_strength_bulk ]
 
 system = espressomd.System(box_l=[final_box_l, final_box_l, final_box_l])
 # system.set_random_state_PRNG()
@@ -219,16 +222,18 @@ def calculate_current_end_to_end_distance():
 #setup weak microgel
 # ------------------------------------------------------------------------
 
-alpha_an = 0.1
 
 microgel = microgel_object.Microgel(system, FENE_BOND_PARAMS, PART_TYPE, NONBOND_WCA_PARAMS, Nbeads_arm, cell_unit, N_cat, N_an, c_salt)
-number_crosslink, number_monomers = microgel.initialize_from_file()
+number_crosslink, number_monomers = microgel.initialize_from_file(mon_per_chain)
+MPC = number_monomers
 N_an = int(alpha_an * (number_crosslink + number_monomers))
 microgel.N_an = N_an
 microgel.initialize_internoelec()
 if N_cat != 0 or N_an !=0:
     microgel.charge_beads_homo()
 handler.remove_overlap(system,STEEPEST_DESCENT_PARAMS)
+
+simulation_parameters=[final_box_l,MPC,Kcideal_in_mol_per_l, cs_bulk, bjerrum, pH, cH_bulk, cOH_bulk, cNa_bulk, cCl_bulk, ionic_strength_bulk ]
 
 # ------------------------------------------------------------------------
 
@@ -424,12 +429,12 @@ i = 0
 
 start_warmup = time.process_time() 
 print("WHILE warmup")
-warm_n_times = 200
+warm_n_times = 1000
 energies_tot_warm = np.zeros((warm_n_times, 2))
 while (i < warm_n_times):
     print(i, "warmup")
     # reaction(MPC*20+300)
-    reaction(20)
+    reaction(5*MPC)
     # system.integrator.run(steps=1000+MPC*2)
     system.integrator.run(steps=100)
     energies_tot_warm[i] = (system.time, system.analysis.energy()['total'])
@@ -455,14 +460,66 @@ np.savetxt(string1, np.column_stack((energies_tot_warm[:, 0], energies_tot_warm[
 
 print("End warmup")
 
-exit()
-
 # remove force capping
 system.force_cap = 0
 system.time_step = 0.01
 #MC warmup
 reaction(5*MPC)
-RE.reaction(120000)
+# RE.reaction(120000)
+
+energies_tot = np.zeros((int_n_times*int_uncorr_times, 2))
+energies_kin = np.zeros((int_n_times*int_uncorr_times, 2))
+energies_nonbon = np.zeros((int_n_times*int_uncorr_times, 2))
+energies_bon = np.zeros((int_n_times*int_uncorr_times, 2))
+energies_coul = np.zeros((int_n_times*int_uncorr_times, 2))
+system.time = 0
+counter_energy = 0
+
+for j in range(int_uncorr_times):
+    # for k in range(2):
+    #     Widom.measure_excess_chemical_potential(0)  # 0 for insertion reaction
+    #     Widom.measure_excess_chemical_potential(2)  #insertion Na
+    #     Widom.measure_excess_chemical_potential(4)  #insertion Cl
+    reaction(int(5*MPC))
+    counter_energy = handler.main_integration(system, int_n_times, int_steps, energies_tot, energies_kin, energies_nonbon, energies_bon, energies_coul, counter_energy)
+    com = com_mod.com_calculation(system, PART_TYPE['polymer_arm'],PART_TYPE['cation'], PART_TYPE['anion'])
+    print('%.5e\t%.5e\t%.5e' % (com[0], com[1], com[2]), file = open(dir_name_var + "center_of_mass.dat", "a"))
+    gyr_tens = system.analysis.gyration_tensor(p_type=[PART_TYPE['crosslinker'], PART_TYPE['polymer_arm'], PART_TYPE['cation'], PART_TYPE['anion']])
+    shape_list = gyr_tens["shape"]
+    print('%.5e\t%.5e\t%.5e\t%.5e\t%.5e\t%.5e\t%.5e' % (
+            gyr_tens["Rg^2"], shape_list[0], shape_list[1], shape_list[2], gyr_tens["eva0"][0], gyr_tens["eva1"][0], gyr_tens["eva2"][0]),
+            file = open(dir_name_var + "gyration_tensor.dat", "a"))
+    print('%.5e\t%.5e\t%.5e\t%.5e\t%.5e\t%.5e\t%.6f' % (
+            system.number_of_particles(type=type_H),
+            system.number_of_particles(type=type_OH),
+            system.number_of_particles(type=type_Na),
+            system.number_of_particles(type=type_Cl),
+            system.number_of_particles(type=type_A),
+            system.number_of_particles(type=type_HA),
+            system.number_of_particles(type=type_A)/system.number_of_particles(type=type_HA)),
+            file = open(dir_name_var + "number_of_particles.dat", "a"))
+
+# save enregy
+string1 = dir_name_var + '/energies.dat'
+np.savetxt(string1, np.column_stack((energies_tot[:, 0], energies_tot[:, 1], energies_kin[:, 1], energies_bon[:, 1], 
+                                        energies_nonbon[:, 1], energies_coul[:, 1])),fmt='%.5e\t%.5e\t%.5e\t%.5e\t%.5e\t%.5e', delimiter='\t')
+''' File columns
+1. time
+2. total energy
+3. kinetic energy
+4. bonded energy
+5. non-bonded energy
+6. coulomb energy
+'''
+
+# Export trajectory to vtf file
+fp = open('trajectory.vtf', mode='w+t')
+# write structure block as header
+espressomd.io.writer.vtf.writevsf(system, fp)
+# write final positions as coordinate block
+espressomd.io.writer.vtf.writevcf(system, fp)
+
+exit()
 
 #tuned_skin=system.cell_system.tune_skin(min_skin=1.0, max_skin=1.6, tol=0.05, int_steps=200)
 #print("tuned_skin", tuned_skin)
